@@ -31,6 +31,8 @@ import {
   ExportDetail,
   forEachParseSuccess,
   importAlias,
+  isExportDefaultModifier,
+  isExportDefaultNamed,
   isParsedTextFile,
   isParseSuccess,
   isTextFile,
@@ -192,6 +194,8 @@ export function addStoryboardFileToProject(editorModel: EditorModel): EditorMode
               // Exported as the default, so exclude it.
               if (
                 success.exportsDetail.defaultExport != null &&
+                (isExportDefaultNamed(success.exportsDetail.defaultExport) ||
+                  isExportDefaultModifier(success.exportsDetail.defaultExport)) &&
                 success.exportsDetail.defaultExport.name === topLevelElement.name
               ) {
                 continue

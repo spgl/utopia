@@ -126,21 +126,27 @@ export function getPropertyNameText(
   }
 }
 
-export function isExported(node: TS.Node): boolean {
-  if (TS.isExportAssignment(node)) {
-    return true
-  } else if (node.modifiers == null) {
-    return false
-  } else {
-    return node.modifiers.some((modifier) => modifier.kind === TS.SyntaxKind.ExportKeyword)
-  }
-}
-
-export function isDefaultExport(node: TS.Node): boolean {
+export function markedWithKeyword(node: TS.Node, keyword: TS.SyntaxKind): boolean {
   if (node.modifiers == null) {
     return false
   } else {
-    return node.modifiers.some((modifier) => modifier.kind === TS.SyntaxKind.DefaultKeyword)
+    return node.modifiers.some((modifier) => modifier.kind === keyword)
+  }
+}
+
+export function markedAsDefault(node: TS.Node): boolean {
+  return markedWithKeyword(node, TS.SyntaxKind.DefaultKeyword)
+}
+
+export function markedAsExported(node: TS.Node): boolean {
+  return markedWithKeyword(node, TS.SyntaxKind.ExportKeyword)
+}
+
+export function isExported(node: TS.Node): boolean {
+  if (TS.isExportAssignment(node)) {
+    return true
+  } else {
+    return markedAsExported(node)
   }
 }
 
@@ -934,7 +940,7 @@ export function parseAttributeOtherJavaScript(
   imports: Imports,
   topLevelNames: Array<string>,
   propsObjectName: string | null,
-  expression: TS.Expression,
+  expression: TS.Node,
   existingHighlightBounds: Readonly<HighlightBoundsForUids>,
   alreadyExistingUIDs: Set<string>,
 ): Either<string, WithParserMetadata<JSXAttributeOtherJavaScript>> {
@@ -1084,7 +1090,7 @@ function parseJSXArbitraryBlock(
   )
 }
 
-function parseAttributeExpression(
+export function parseAttributeExpression(
   sourceFile: TS.SourceFile,
   sourceText: string,
   filename: string,

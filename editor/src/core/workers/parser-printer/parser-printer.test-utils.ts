@@ -59,6 +59,8 @@ import {
   jsxAttributesFromMap,
   ImportStatement,
   importStatement,
+  clearAttributeUniqueIDs,
+  clearJSXAttributeOtherJavaScriptUniqueIDs,
 } from '../../shared/element-template'
 import { addImport } from '../common/project-file-utils'
 import { ErrorMessage } from '../../shared/error-messages'
@@ -83,6 +85,10 @@ import {
   isParseSuccess,
   isTextFile,
   ProjectFile,
+  isExportDefaultExpression,
+  exportDefaultExpression,
+  isExportDefaultFunction,
+  exportDefaultFunction,
 } from '../../shared/project-file-types'
 import { lintAndParse, printCode, printCodeOptions } from './parser-printer'
 import { getUtopiaIDFromJSXElement } from '../../shared/uid-utils'
@@ -255,6 +261,26 @@ function parseModifyPrint(
   )
 }
 
+export function clearExportsDetailUniqueIDsAndEmptyBlocks(detail: ExportsDetail): ExportsDetail {
+  if (isExportDefaultExpression(detail.defaultExport)) {
+    return {
+      ...detail,
+      defaultExport: exportDefaultExpression(
+        clearAttributeUniqueIDs(detail.defaultExport.expression),
+      ),
+    }
+  } else if (isExportDefaultFunction(detail.defaultExport)) {
+    return {
+      ...detail,
+      defaultExport: exportDefaultFunction(
+        clearJSXAttributeOtherJavaScriptUniqueIDs(detail.defaultExport.fn),
+      ),
+    }
+  } else {
+    return detail
+  }
+}
+
 export function clearParseResultUniqueIDsAndEmptyBlocks(
   parseResult: ParsedTextFile,
 ): ParsedTextFile {
@@ -266,10 +292,12 @@ export function clearParseResultUniqueIDsAndEmptyBlocks(
       ArbitraryJSBlock,
       ArbitraryJSBlock
     >(clearTopLevelElementUniqueIDsAndEmptyBlocks, success.combinedTopLevelArbitraryBlock)
+    const updatedExportsDetail = clearExportsDetailUniqueIDsAndEmptyBlocks(success.exportsDetail)
     return {
       ...success,
       topLevelElements: updatedTopLevelElements,
       combinedTopLevelArbitraryBlock: combinedTopLevelArbitraryBlock,
+      exportsDetail: updatedExportsDetail,
     }
   }, parseResult)
 }

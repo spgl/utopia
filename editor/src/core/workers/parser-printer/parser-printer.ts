@@ -90,6 +90,8 @@ import {
   isExportDetailModifier,
   isExportDefaultNamed,
   TextFile,
+  setExpressionDefaultExportInDetail,
+  setFunctionDefaultExportInDetail,
 } from '../../shared/project-file-types'
 import * as PP from '../../shared/property-path'
 import { fastForEach, NO_OP } from '../../shared/utils'
@@ -109,9 +111,11 @@ import {
   parseAttributeOtherJavaScript,
   withParserMetadata,
   isExported,
-  isDefaultExport,
   expressionTypeForExpression,
   extractPrefixedCode,
+  parseAttributeExpression,
+  markedAsExported,
+  markedAsDefault,
 } from './parser-printer-parsing'
 import { getBoundsOfNodes, guaranteeUniqueUidsFromTopLevel } from './parser-printer-utils'
 import { ParseOrPrint, ParseOrPrintResult, ParsePrintResultMessage } from './parser-printer-worker'
@@ -1001,15 +1005,23 @@ function detailsFromExportDeclaration(
     const result = exportClause.elements.reduce((workingResult, specifier) => {
       const specifierName = specifier.name.getText(sourceFile)
       if (specifier.propertyName == null) {
-        return addNamedExportToDetail(workingResult, specifierName, specifierName, moduleName)
+        if (specifierName === 'default') {
+          return setNamedDefaultExportInDetail(workingResult, specifierName)
+        } else {
+          return addNamedExportToDetail(workingResult, specifierName, specifierName, moduleName)
+        }
       } else {
         const specifierPropertyName = specifier.propertyName.getText(sourceFile)
-        return addNamedExportToDetail(
-          workingResult,
-          specifierName,
-          specifierPropertyName,
-          moduleName,
-        )
+        if (specifierName === 'default') {
+          return setNamedDefaultExportInDetail(workingResult, specifierPropertyName)
+        } else {
+          return addNamedExportToDetail(
+            workingResult,
+            specifierName,
+            specifierPropertyName,
+            moduleName,
+          )
+        }
       }
     }, exportsDetail(null, {}))
     return right(result)
@@ -1187,6 +1199,25 @@ export function parseCode(
         })
         // Unable to parse it so treat it as an arbitrary node.
         forEachLeft(fromAssignment, (exportDeclaration) => {
+          // Check for an exported default expression.
+          const possibleExpression = parseAttributeExpression(
+            sourceFile,
+            sourceText,
+            filename,
+            imports,
+            topLevelNames,
+            null,
+            topLevelElement.expression,
+            highlightBounds,
+            alreadyExistingUIDs_MUTABLE,
+            [],
+          )
+          forEachRight(possibleExpression, (defaultExpression) => {
+            detailOfExports = setExpressionDefaultExportInDetail(
+              detailOfExports,
+              defaultExpression.value,
+            )
+          })
           pushArbitraryNode(exportDeclaration)
         })
       } else if (TS.isExportDeclaration(topLevelElement)) {
@@ -1201,18 +1232,11 @@ export function parseCode(
         forEachLeft(fromDeclaration, (exportDeclaration) => {
           pushArbitraryNode(exportDeclaration)
         })
-      } else if (
-        TS.isClassDeclaration(topLevelElement) &&
-        topLevelElement.modifiers != null &&
-        topLevelElement.modifiers.some((modifier) => modifier.kind === TS.SyntaxKind.ExportKeyword)
-      ) {
+      } else if (TS.isClassDeclaration(topLevelElement) && markedAsExported(topLevelElement)) {
         // Handle classes.
-        // Check if this is the 'default' export, which is to say the entire export for the file.
-        if (
-          topLevelElement.modifiers.some(
-            (modifier) => modifier.kind === TS.SyntaxKind.DefaultKeyword,
-          )
-        ) {
+        // Check if this is the 'default' export, which is to say what the caller will get if not
+        // specifying a particular value from the module.
+        if (markedAsDefault(topLevelElement)) {
           if (topLevelElement.name != null) {
             detailOfExports = setModifierDefaultExportInDetail(
               detailOfExports,
@@ -1358,7 +1382,7 @@ export function parseCode(
           if (isLeft(parsedContents) || (isFunction && isLeft(parsedFunctionParam))) {
             pushArbitraryNode(topLevelElement)
             if (isExported(topLevelElement)) {
-              const defaultExport = isDefaultExport(topLevelElement)
+              const defaultExport = markedAsDefault(topLevelElement)
               if (defaultExport) {
                 detailOfExports = setModifierDefaultExportInDetail(detailOfExports, name)
               } else {
@@ -1394,7 +1418,7 @@ export function parseCode(
                 contents.returnStatementComments,
               )
 
-              const defaultExport = isDefaultExport(topLevelElement)
+              const defaultExport = markedAsDefault(topLevelElement)
               if (exported) {
                 if (defaultExport) {
                   detailOfExports = setModifierDefaultExportInDetail(detailOfExports, name)
@@ -1409,7 +1433,98 @@ export function parseCode(
             }
           }
         } else {
-          pushArbitraryNode(topLevelElement)
+          // Fallback for things which don't parse but may be similar to those
+          // node types which do.
+          if (TS.isVariableStatement(topLevelElement)) {
+            if (
+              topLevelElement.modifiers != null &&
+              topLevelElement.modifiers.some(
+                (modifier) => modifier.kind === TS.SyntaxKind.ExportKeyword,
+              )
+            ) {
+              // Handle variable statements.
+              // Check if this is the 'default' export, which is to say what the caller will get if not
+              // specifying a particular value from the module.
+              const isDefault = topLevelElement.modifiers.some(
+                (modifier) => modifier.kind === TS.SyntaxKind.DefaultKeyword,
+              )
+
+              function pushToExports(bindingOrName: TS.Identifier | TS.BindingElement): void {
+                let nameToUse: string
+                let aliasToUse: string
+                if (TS.isIdentifier(bindingOrName)) {
+                  nameToUse = bindingOrName.getText(sourceFile)
+                  aliasToUse = nameToUse
+                } else {
+                  if (bindingOrName.propertyName == null) {
+                    nameToUse = bindingOrName.name.getText(sourceFile)
+                    aliasToUse = nameToUse
+                  } else {
+                    nameToUse = bindingOrName.propertyName.getText(sourceFile)
+                    aliasToUse = bindingOrName.name.getText(sourceFile)
+                  }
+                }
+
+                if (isDefault) {
+                  detailOfExports = setModifierDefaultExportInDetail(detailOfExports, nameToUse)
+                } else {
+                  if (aliasToUse === 'default') {
+                    detailOfExports = setNamedDefaultExportInDetail(detailOfExports, nameToUse)
+                  } else {
+                    detailOfExports = addNamedExportToDetail(
+                      detailOfExports,
+                      nameToUse,
+                      aliasToUse,
+                      undefined,
+                    )
+                  }
+                }
+              }
+
+              function addDeclaration(name: TS.BindingName): void {
+                if (TS.isIdentifier(name)) {
+                  pushToExports(name)
+                } else if (TS.isObjectBindingPattern(name)) {
+                  for (const element of name.elements) {
+                    pushToExports(element)
+                  }
+                }
+              }
+
+              for (const declaration of topLevelElement.declarationList.declarations) {
+                addDeclaration(declaration.name)
+              }
+
+              pushArbitraryNode(topLevelElement)
+            }
+          } else if (
+            TS.isFunctionDeclaration(topLevelElement) &&
+            topLevelElement.name == null &&
+            markedAsDefault(topLevelElement) &&
+            markedAsExported(topLevelElement)
+          ) {
+            // TODO: Check this still gets handled if the function is a valid React component.
+            const possibleExpression = parseAttributeOtherJavaScript(
+              sourceFile,
+              sourceText,
+              filename,
+              imports,
+              topLevelNames,
+              null,
+              topLevelElement,
+              highlightBounds,
+              alreadyExistingUIDs_MUTABLE,
+            )
+            forEachRight(possibleExpression, (defaultExpression) => {
+              detailOfExports = setFunctionDefaultExportInDetail(
+                detailOfExports,
+                defaultExpression.value,
+              )
+            })
+          } else {
+            // If all else fails add it as just an arbitrary node.
+            pushArbitraryNode(topLevelElement)
+          }
         }
       }
     }

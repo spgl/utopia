@@ -16,6 +16,8 @@ import {
   ElementPath,
   isParseSuccess,
   isTextFile,
+  isExportDefaultNamed,
+  isExportDefaultModifier,
 } from '../../core/shared/project-file-types'
 import {
   Either,
@@ -365,7 +367,12 @@ export const UiJsxCanvas = betterReactMemo(
                 for (const s of Object.keys(scope)) {
                   if (s in exportsDetail.namedExports) {
                     filteredScope[s] = scope[s]
-                  } else if (s === exportsDetail.defaultExport?.name) {
+                  } else if (
+                    exportsDetail.defaultExport != null &&
+                    (isExportDefaultNamed(exportsDetail.defaultExport) ||
+                      isExportDefaultModifier(exportsDetail.defaultExport)) &&
+                    s === exportsDetail.defaultExport.name
+                  ) {
                     filteredScope['default'] = scope[s]
                   }
                 }
